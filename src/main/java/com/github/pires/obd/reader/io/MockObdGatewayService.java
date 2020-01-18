@@ -28,10 +28,10 @@ public class MockObdGatewayService extends AbstractGatewayService {
     private static final String TAG = MockObdGatewayService.class.getName();
 
     public void startService() {
-        Log.d(TAG, "Starting " + this.getClass().getName() + " service..");
+//        Log.d(TAG, "Starting " + this.getClass().getName() + " service..");
 
         // Let's configure the connection.
-        Log.d(TAG, "Queing jobs for connection configuration..");
+//        Log.d(TAG, "Queing jobs for connection configuration..");
         queueJob(new ObdCommandJob(new ObdResetCommand()));
         queueJob(new ObdCommandJob(new EchoOffCommand()));
 
@@ -52,7 +52,7 @@ public class MockObdGatewayService extends AbstractGatewayService {
         queueJob(new ObdCommandJob(new AmbientAirTemperatureCommand()));
 
         queueCounter = 0L;
-        Log.d(TAG, "Initialization jobs queued.");
+//        Log.d(TAG, "Initialization jobs queued.");
 
         isRunning = true;
     }
@@ -62,21 +62,23 @@ public class MockObdGatewayService extends AbstractGatewayService {
      * Runs the queue until the service is stopped
      */
     protected void executeQueue() {
-        Log.d(TAG, "Executing queue..");
+//        Log.d(TAG, "Executing queue..");
         while (!Thread.currentThread().isInterrupted()) {
             ObdCommandJob job = null;
             try {
                 job = jobsQueue.take();
 
-                Log.d(TAG, "Taking job[" + job.getId() + "] from queue..");
+                Thread.sleep(500);
+
+//                Log.d(TAG, "Taking job[" + job.getId() + "] from queue..");
 
                 if (job.getState().equals(ObdCommandJobState.NEW)) {
-                    Log.d(TAG, "Job state is NEW. Run it..");
+//                    Log.d(TAG, "Job state is NEW. Run it..");
                     job.setState(ObdCommandJobState.RUNNING);
-                    Log.d(TAG, job.getCommand().getName());
+//                    Log.d(TAG, job.getCommand().getName());
                     job.getCommand().run(new ByteArrayInputStream("41 00 00 00>41 00 00 00>41 00 00 00>".getBytes()), new ByteArrayOutputStream());
                 } else {
-                    Log.e(TAG, "Job state was not new, so it shouldn't be in queue. BUG ALERT!");
+//                    Log.e(TAG, "Job state was not new, so it shouldn't be in queue. BUG ALERT!");
                 }
             } catch (InterruptedException i) {
                 Thread.currentThread().interrupt();
@@ -85,11 +87,11 @@ public class MockObdGatewayService extends AbstractGatewayService {
                 if (job != null) {
                     job.setState(ObdCommandJobState.EXECUTION_ERROR);
                 }
-                Log.e(TAG, "Failed to run command. -> " + e.getMessage());
+//                Log.e(TAG, "Failed to run command. -> " + e.getMessage());
             }
 
             if (job != null) {
-                Log.d(TAG, "Job is finished.");
+//                Log.d(TAG, "Job is finished.");
                 job.setState(ObdCommandJobState.FINISHED);
                 final ObdCommandJob job2 = job;
                 ((MainActivity) ctx).runOnUiThread(new Runnable() {

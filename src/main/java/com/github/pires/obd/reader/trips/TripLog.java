@@ -11,6 +11,7 @@ import android.util.Log;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
+import java.util.UUID;
 
 /**
  * Some code taken from https://github.com/wdkapps/FillUp
@@ -108,6 +109,7 @@ public class TripLog {
             TripRecord record = new TripRecord();
             long rowID = db.insertOrThrow(RECORDS_TABLE, null, getContentValues(record));
             record.setID((int) rowID);
+            record.setUuid(UUID.randomUUID().toString());
             return record;
         } catch (SQLiteConstraintException e) {
             Log.e(tag, "SQLiteConstraintException: " + e.getMessage());

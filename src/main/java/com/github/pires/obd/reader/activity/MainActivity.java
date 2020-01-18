@@ -1,5 +1,7 @@
 package com.github.pires.obd.reader.activity;
 
+import android.Manifest;
+import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.app.Dialog;
@@ -10,6 +12,7 @@ import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.ServiceConnection;
 import android.content.SharedPreferences;
+import android.content.pm.PackageManager;
 import android.hardware.Sensor;
 import android.hardware.SensorEvent;
 import android.hardware.SensorEventListener;
@@ -19,11 +22,11 @@ import android.location.Location;
 import android.location.LocationListener;
 import android.location.LocationManager;
 import android.location.LocationProvider;
-import android.os.AsyncTask;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.PowerManager;
+import android.support.v4.app.ActivityCompat;
 import android.util.Log;
 import android.view.Gravity;
 import android.view.Menu;
@@ -37,12 +40,21 @@ import android.widget.TableRow;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import com.amazonaws.mobile.client.AWSMobileClient;
+import com.amazonaws.mobile.client.Callback;
+import com.amazonaws.mobile.client.UserStateDetails;
+import com.amazonaws.mobileconnectors.iot.AWSIotMqttClientStatusCallback;
+import com.amazonaws.mobileconnectors.iot.AWSIotMqttManager;
+import com.amazonaws.mobileconnectors.iot.AWSIotMqttQos;
+import com.github.anastr.speedviewlib.TubeSpeedometer;
 import com.github.pires.obd.commands.ObdCommand;
 import com.github.pires.obd.commands.SpeedCommand;
+import com.github.pires.obd.commands.control.VinCommand;
 import com.github.pires.obd.commands.engine.RPMCommand;
 import com.github.pires.obd.commands.engine.RuntimeCommand;
 import com.github.pires.obd.enums.AvailableCommandNames;
 import com.github.pires.obd.reader.R;
+import com.github.pires.obd.reader.cloud.AwsUploadOpenXCMessageTask;
 import com.github.pires.obd.reader.config.ObdConfig;
 import com.github.pires.obd.reader.io.AbstractGatewayService;
 import com.github.pires.obd.reader.io.LogCSVWriter;
@@ -50,10 +62,16 @@ import com.github.pires.obd.reader.io.MockObdGatewayService;
 import com.github.pires.obd.reader.io.ObdCommandJob;
 import com.github.pires.obd.reader.io.ObdGatewayService;
 import com.github.pires.obd.reader.io.ObdProgressListener;
-import com.github.pires.obd.reader.net.ObdReading;
-import com.github.pires.obd.reader.net.ObdService;
+import com.github.pires.obd.reader.openxc.GsonSerializer;
+import com.github.pires.obd.reader.openxc.Odb2OpenXCMapper;
+import com.github.pires.obd.reader.openxc.OpenXCLocationMessage;
+import com.github.pires.obd.reader.openxc.OpenXCMessage;
+import com.github.pires.obd.reader.trips.AggregatedTrip;
+import com.github.pires.obd.reader.trips.OdometerCalculator;
+import com.github.pires.obd.reader.trips.TripAggragator;
 import com.github.pires.obd.reader.trips.TripLog;
 import com.github.pires.obd.reader.trips.TripRecord;
+import com.google.gson.Gson;
 import com.google.inject.Inject;
 
 import java.io.FileNotFoundException;
@@ -63,10 +81,9 @@ import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
 
-import retrofit.RestAdapter;
-import retrofit.RetrofitError;
-import retrofit.client.Response;
 import roboguice.RoboGuice;
 import roboguice.activity.RoboActivity;
 import roboguice.inject.ContentView;
@@ -94,6 +111,10 @@ public class MainActivity extends RoboActivity implements ObdProgressListener, L
     private static final int SAVE_TRIP_NOT_AVAILABLE = 11;
     private static final int REQUEST_ENABLE_BT = 1234;
     private static boolean bluetoothDefaultIsEnable = false;
+
+    private static final String CLIENT_ENDPOINT = "CHANGE_ME.iot.eu-central-1.amazonaws.com";
+    // replace once cognito user pool is set
+    private static String CLIENT_ID = "";
 
     static {
         RoboGuice.setUseAnnotationDatabases(false);
@@ -146,16 +167,31 @@ public class MainActivity extends RoboActivity implements ObdProgressListener, L
     private TextView obdStatusTextView;
     @InjectView(R.id.GPS_POS)
     private TextView gpsStatusTextView;
+    @InjectView(R.id.AWS_STATUS)
+    private TextView awsStatusTextView;
     @InjectView(R.id.vehicle_view)
     private LinearLayout vv;
     @InjectView(R.id.data_table)
     private TableLayout tl;
+    @InjectView(R.id.engine_rpm)
+    private TubeSpeedometer rpm;
+    @InjectView(R.id.speed)
+    private TubeSpeedometer speed;
     @Inject
     private SensorManager sensorManager;
     @Inject
     private PowerManager powerManager;
     @Inject
     private SharedPreferences prefs;
+
+    private String vin;
+    private AWSIotMqttManager mqttManager;
+    private AWSIotMqttClientStatusCallback.AWSIotMqttClientStatus mAwsStatus;
+    private OdometerCalculator mOdometerCalculator;
+    private Gson mGson;
+    private Map<String, Integer> errorsMap = new HashMap<>();
+    private TripAggragator tripAggragator;
+
     private boolean isServiceBound;
     private AbstractGatewayService service;
     private final Runnable mQueueCommands = new Runnable() {
@@ -166,7 +202,6 @@ public class MainActivity extends RoboActivity implements ObdProgressListener, L
                 double lat = 0;
                 double lon = 0;
                 double alt = 0;
-                final int posLen = 7;
                 if (mGpsIsStarted && mLastLocation != null) {
                     lat = mLastLocation.getLatitude();
                     lon = mLastLocation.getLongitude();
@@ -174,28 +209,22 @@ public class MainActivity extends RoboActivity implements ObdProgressListener, L
 
                     StringBuilder sb = new StringBuilder();
                     sb.append("Lat: ");
-                    sb.append(String.valueOf(mLastLocation.getLatitude()).substring(0, posLen));
+                    sb.append(fixGpsStr(lat));
                     sb.append(" Lon: ");
-                    sb.append(String.valueOf(mLastLocation.getLongitude()).substring(0, posLen));
+                    sb.append(fixGpsStr(lon));
                     sb.append(" Alt: ");
-                    sb.append(String.valueOf(mLastLocation.getAltitude()));
+                    sb.append(fixGpsStr(alt));
                     gpsStatusTextView.setText(sb.toString());
-                }
-                if (prefs.getBoolean(ConfigActivity.UPLOAD_DATA_KEY, false)) {
-                    // Upload the current reading by http
-                    final String vin = prefs.getString(ConfigActivity.VEHICLE_ID_KEY, "UNDEFINED_VIN");
-                    Map<String, String> temp = new HashMap<String, String>();
-                    temp.putAll(commandResult);
-                    ObdReading reading = new ObdReading(lat, lon, alt, System.currentTimeMillis(), vin, temp);
-                    new UploadAsyncTask().execute(reading);
 
-                } else if (prefs.getBoolean(ConfigActivity.ENABLE_FULL_LOGGING_KEY, false)) {
-                    // Write the current reading to CSV
-                    final String vin = prefs.getString(ConfigActivity.VEHICLE_ID_KEY, "UNDEFINED_VIN");
-                    Map<String, String> temp = new HashMap<String, String>();
-                    temp.putAll(commandResult);
-                    ObdReading reading = new ObdReading(lat, lon, alt, System.currentTimeMillis(), vin, temp);
-                    if(reading != null) myCSVWriter.writeLineCSV(reading);
+                    if (mqttManager != null && currentTrip != null && mGson != null && vin != null) {
+                        OpenXCLocationMessage mLocationMessage = new OpenXCLocationMessage(currentTrip.getUuid(), vin, lat, lon);
+                        if (tripAggragator != null) {
+                            tripAggragator.update(mLocationMessage);
+                        }
+                        if (mAwsStatus != null && mAwsStatus.equals(AWSIotMqttClientStatusCallback.AWSIotMqttClientStatus.Connected)) {
+                            new AwsUploadOpenXCMessageTask(mqttManager, mGson).execute(mLocationMessage);
+                        }
+                    }
                 }
                 commandResult.clear();
             }
@@ -265,6 +294,17 @@ public class MainActivity extends RoboActivity implements ObdProgressListener, L
             if (cmdResult != null && isServiceBound) {
                 obdStatusTextView.setText(cmdResult.toLowerCase());
             }
+            if (errorsMap.containsKey(cmdID)) {
+                errorsMap.put(cmdID, errorsMap.get(cmdID) + 1);
+            } else {
+                errorsMap.put(cmdID, 1);
+            }
+            // disable odb command after 3 unsuccessful attempts
+            if (errorsMap.get(cmdID) > 3) {
+                // disable command which causes error
+                prefs.edit().putBoolean(job.getCommand().getName(), false).apply();
+            }
+
         } else if (job.getState().equals(ObdCommandJob.ObdCommandJobState.BROKEN_PIPE)) {
             if (isServiceBound)
                 stopLiveData();
@@ -272,9 +312,23 @@ public class MainActivity extends RoboActivity implements ObdProgressListener, L
             cmdResult = getString(R.string.status_obd_no_support);
         } else {
             cmdResult = job.getCommand().getFormattedResult();
-            if(isServiceBound)
+            if (isServiceBound)
                 obdStatusTextView.setText(getString(R.string.status_obd_data));
         }
+        if (job.getCommand() instanceof RPMCommand) {
+            RPMCommand rpmCommand = (RPMCommand) job.getCommand();
+            rpm.speedTo(rpmCommand.getRPM());
+        }
+
+        if (job.getCommand() instanceof SpeedCommand) {
+            SpeedCommand speedCommand = (SpeedCommand) job.getCommand();
+            speed.speedTo(speedCommand.getMetricSpeed(), 100);
+        }
+        if (job.getCommand() instanceof VinCommand) {
+            VinCommand vinCommand = (VinCommand) job.getCommand();
+            this.vin = vinCommand.getFormattedResult();
+        }
+
 
         if (vv.findViewWithTag(cmdID) != null) {
             TextView existingTV = (TextView) vv.findViewWithTag(cmdID);
@@ -282,6 +336,26 @@ public class MainActivity extends RoboActivity implements ObdProgressListener, L
         } else addTableRow(cmdID, cmdName, cmdResult);
         commandResult.put(cmdID, cmdResult);
         updateTripStatistic(job, cmdID);
+
+        if (vin != null) {
+            OpenXCMessage message = Odb2OpenXCMapper.map(job.getCommand(), getTripId(), vin);
+            if (message != null) {
+                if (tripAggragator != null) {
+                    tripAggragator.update(message);
+                }
+                if (mAwsStatus != null && mAwsStatus.equals(AWSIotMqttClientStatusCallback.AWSIotMqttClientStatus.Connected)) {
+                    new AwsUploadOpenXCMessageTask(mqttManager, mGson).execute(message);
+                    // calculate odometer
+                    if (job.getCommand() instanceof SpeedCommand) {
+                        OpenXCMessage odometerMessage = mOdometerCalculator.calculate(message, getTripId(), vin);
+                        new AwsUploadOpenXCMessageTask(mqttManager, mGson).execute(odometerMessage);
+                        if (tripAggragator != null) {
+                            tripAggragator.update(odometerMessage);
+                        }
+                    }
+                }
+            }
+        }
     }
 
     private boolean gpsInit() {
@@ -289,6 +363,9 @@ public class MainActivity extends RoboActivity implements ObdProgressListener, L
         if (mLocService != null) {
             mLocProvider = mLocService.getProvider(LocationManager.GPS_PROVIDER);
             if (mLocProvider != null) {
+                if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+                    return false;
+                }
                 mLocService.addGpsStatusListener(this);
                 if (mLocService.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
                     gpsStatusTextView.setText(getString(R.string.status_gps_ready));
@@ -338,6 +415,10 @@ public class MainActivity extends RoboActivity implements ObdProgressListener, L
         triplog = TripLog.getInstance(this.getApplicationContext());
         
         obdStatusTextView.setText(getString(R.string.status_obd_disconnected));
+
+        mGson = GsonSerializer.build();
+        mOdometerCalculator = new OdometerCalculator();
+        awsStatusTextView.setText("Not connected");
     }
 
     @Override
@@ -361,6 +442,7 @@ public class MainActivity extends RoboActivity implements ObdProgressListener, L
         }
 
         endTrip();
+        mqttManager.disconnect();
 
         final BluetoothAdapter btAdapter = BluetoothAdapter.getDefaultAdapter();
         if (btAdapter != null && btAdapter.isEnabled() && !bluetoothDefaultIsEnable)
@@ -387,8 +469,8 @@ public class MainActivity extends RoboActivity implements ObdProgressListener, L
         Log.d(TAG, "Resuming..");
         sensorManager.registerListener(orientListener, orientSensor,
                 SensorManager.SENSOR_DELAY_UI);
-        wakeLock = powerManager.newWakeLock(PowerManager.SCREEN_DIM_WAKE_LOCK,
-                "ObdReader");
+        wakeLock = powerManager.newWakeLock(PowerManager.SCREEN_BRIGHT_WAKE_LOCK,
+                "ObdReader:WakeLock");
 
         // get Bluetooth device
         final BluetoothAdapter btAdapter = BluetoothAdapter
@@ -453,6 +535,8 @@ public class MainActivity extends RoboActivity implements ObdProgressListener, L
         tl.removeAllViews(); //start fresh
         doBindService();
 
+        mqttConnect();
+
         currentTrip = triplog.startTrip();
         if (currentTrip == null)
             showDialog(SAVE_TRIP_NOT_AVAILABLE);
@@ -467,6 +551,9 @@ public class MainActivity extends RoboActivity implements ObdProgressListener, L
 
         // screen won't turn off until wakeLock.release()
         wakeLock.acquire();
+
+        mOdometerCalculator.start();
+        tripAggragator = new TripAggragator(new AggregatedTrip(getTripId(), vin));
 
         if (prefs.getBoolean(ConfigActivity.ENABLE_FULL_LOGGING_KEY, false)) {
 
@@ -492,6 +579,14 @@ public class MainActivity extends RoboActivity implements ObdProgressListener, L
 
         doUnbindService();
         endTrip();
+
+        if (tripAggragator != null) {
+            AggregatedTrip trip = tripAggragator.endTrip();
+            Log.d(TAG, mGson.toJson(trip));
+            mqttManager.publishString(mGson.toJson(trip), "connectedcar/trip/" + vin, AWSIotMqttQos.QOS0);
+        }
+
+        mqttManager.disconnect();
 
         releaseWakeLockIfHeld();
 
@@ -593,9 +688,6 @@ public class MainActivity extends RoboActivity implements ObdProgressListener, L
         tl.addView(tr, params);
     }
 
-    /**
-     *
-     */
     private void queueCommands() {
         if (isServiceBound) {
             for (ObdCommand Command : ObdConfig.getCommands()) {
@@ -676,6 +768,7 @@ public class MainActivity extends RoboActivity implements ObdProgressListener, L
         super.onActivityResult(requestCode, resultCode, data);
     }
 
+    @SuppressLint("MissingPermission")
     private synchronized void gpsStart() {
         if (!mGpsIsStarted && mLocProvider != null && mLocService != null && mLocService.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
             mLocService.requestLocationUpdates(mLocProvider.getName(), getGpsUpdatePeriod(prefs), getGpsDistanceUpdatePeriod(prefs), this);
@@ -693,33 +786,87 @@ public class MainActivity extends RoboActivity implements ObdProgressListener, L
         }
     }
 
-    /**
-     * Uploading asynchronous task
-     */
-    private class UploadAsyncTask extends AsyncTask<ObdReading, Void, Void> {
-
-        @Override
-        protected Void doInBackground(ObdReading... readings) {
-            Log.d(TAG, "Uploading " + readings.length + " readings..");
-            // instantiate reading service client
-            final String endpoint = prefs.getString(ConfigActivity.UPLOAD_URL_KEY, "");
-            RestAdapter restAdapter = new RestAdapter.Builder()
-                    .setEndpoint(endpoint)
-                    .build();
-            ObdService service = restAdapter.create(ObdService.class);
-            // upload readings
-            for (ObdReading reading : readings) {
-                try {
-                    Response response = service.uploadReading(reading);
-                    assert response.getStatus() == 200;
-                } catch (RetrofitError re) {
-                    Log.e(TAG, re.toString());
-                }
-
+    private String getTripId() {
+        if (currentTrip != null) {
+            if (currentTrip.getUuid() != null) {
+                return currentTrip.getUuid();
+            } else {
+                String uuid = UUID.randomUUID().toString();
+                currentTrip.setUuid(uuid);
+                return uuid;
             }
-            Log.d(TAG, "Done");
-            return null;
+        }
+        return UUID.randomUUID().toString();
+    }
+
+    private void mqttConnect() {
+        CLIENT_ID = UUID.randomUUID().toString();
+        Log.d(TAG, "clientId = " + CLIENT_ID);
+
+        // Initialize the credentials provider
+        final CountDownLatch latch = new CountDownLatch(1);
+
+        AWSMobileClient.getInstance().initialize(
+                getApplicationContext(),
+                new Callback<UserStateDetails>() {
+                    @Override
+                    public void onResult(UserStateDetails result) {
+                        latch.countDown();
+                    }
+
+                    @Override
+                    public void onError(Exception e) {
+                        latch.countDown();
+                        Log.e(TAG, "onError: ", e);
+                    }
+                }
+        );
+
+        try {
+            latch.await();
+        } catch (InterruptedException e) {
+            e.printStackTrace();
         }
 
+        // MQTT Client
+        mqttManager = new AWSIotMqttManager(CLIENT_ID, CLIENT_ENDPOINT);
+        mqttManager.setKeepAlive(10);
+        mqttManager.setOfflinePublishQueueEnabled(true);
+
+
+        try {
+            mqttManager.connect(AWSMobileClient.getInstance(), new AWSIotMqttClientStatusCallback() {
+                @Override
+                public void onStatusChanged(final AWSIotMqttClientStatus status,
+                                            final Throwable throwable) {
+                    Log.d(TAG, "Status = " + String.valueOf(status));
+
+                    mAwsStatus = status;
+
+                    runOnUiThread(new Runnable() {
+                        @Override
+                        public void run() {
+                            awsStatusTextView.setText(status.toString());
+                            if (throwable != null) {
+                                Log.e(TAG, "Connection error.", throwable);
+                            }
+                        }
+                    });
+                }
+            });
+        } catch (final Exception e) {
+            Log.e(TAG, "AWS Connection error", e);
+            awsStatusTextView.setText(e.getMessage());
+        }
     }
+
+    private String fixGpsStr(double attr) {
+        String str = String.valueOf(attr);
+        if (str.length() > 7) {
+            return str.substring(0,7);
+        } else {
+            return str;
+        }
+    }
+
 }

@@ -21,6 +21,8 @@ public class TripRecord {
 
     private String engineRuntime;
 
+    private String uuid;
+
     public TripRecord() {
         startDate = new Date();
     }
@@ -133,5 +135,13 @@ public class TripRecord {
         if (!value.equals("00:00:00")) {
             this.engineRuntime = value;
         }
+    }
+
+    public String getUuid() {
+        return uuid;
+    }
+
+    public void setUuid(String uuid) {
+        this.uuid = uuid;
     }
 }

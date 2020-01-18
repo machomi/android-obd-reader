@@ -80,15 +80,15 @@ public abstract class AbstractGatewayService extends RoboService {
      */
     public void queueJob(ObdCommandJob job) {
         queueCounter++;
-        Log.d(TAG, "Adding job[" + queueCounter + "] to queue..");
+//        Log.d(TAG, "Adding job[" + queueCounter + "] to queue..");
 
         job.setId(queueCounter);
         try {
             jobsQueue.put(job);
-            Log.d(TAG, "Job queued successfully.");
+//            Log.d(TAG, "Job queued successfully.");
         } catch (InterruptedException e) {
             job.setState(ObdCommandJob.ObdCommandJobState.QUEUE_ERROR);
-            Log.e(TAG, "Failed to queue job.");
+//            Log.e(TAG, "Failed to queue job.");
         }
     }
 

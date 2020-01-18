@@ -1,0 +1,14 @@
+{
+  "Version": "1.0",
+  "IdentityManager": {
+    "Default": {}
+  },
+  "CredentialsProvider": {
+    "CognitoIdentity": {
+      "Default": {
+        "PoolId": "eu-central-1:CHANGE_ME",
+        "Region": "eu-central-1"
+      }
+    }
+  }
+}

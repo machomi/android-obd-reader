@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout
-    xmlns:android="http://schemas.android.com/apk/res/android"
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:id="@+id/vehicle_view"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
@@ -8,16 +8,15 @@
     android:orientation="vertical">
 
     <TableRow
-        android:layout_width="fill_parent"
+        android:layout_width="match_parent"
         android:layout_height="wrap_content">
 
         <TextView
             android:layout_width="0dp"
-            android:layout_height="wrap_content"
+            android:layout_height="match_parent"
             android:layout_weight="2"
-            android:tag="SPEED"
-            android:text="@string/text_zero"
-            android:textSize="@dimen/abc_text_size_display_3_material" />
+            android:tag="ENGINE_RUNTIME"
+            android:text="@string/text_runtime_default" />
 
         <TextView
             android:id="@+id/compass_text"
@@ -25,37 +24,62 @@
             android:layout_height="wrap_content"
             android:layout_weight="1"
             android:gravity="end"
-            android:text="@string/text_orientation_default"
-            android:textSize="@dimen/abc_text_size_display_3_material" />
+            android:text="@string/text_orientation_default" />
+
     </TableRow>
 
+
     <TableRow
-        android:layout_width="fill_parent"
-        android:layout_height="wrap_content">
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center">
 
-        <TextView
-            android:layout_width="0dp"
+        <com.github.anastr.speedviewlib.TubeSpeedometer
+            android:id="@+id/engine_rpm"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="start"
+            android:layout_marginEnd="@dimen/activity_horizontal_margin"
+            android:layout_weight="1"
+            app:sv_centerCircleColor="#00ff0000"
+            app:sv_markColor="@android:color/holo_blue_dark"
+            app:sv_maxSpeed="8000"
+            app:sv_minSpeed="0"
+            app:sv_speedTextColor="#6B6565"
+            app:sv_speedTextFormat="INTEGER"
+            app:sv_speedTextPosition="BOTTOM_CENTER"
+            app:sv_speedTextSize="64dp"
+            app:sv_speedometerWidth="8dp"
+            app:sv_textColor="#6B6565"
+            app:sv_unit="x1000 RPM"
+            app:sv_unitSpeedInterval="8dp"
+            app:sv_unitTextColor="#6B6565"
+            app:sv_unitTextSize="12dp"
+            app:sv_unitUnderSpeedText="true"
+            app:sv_withEffects3D="false" />
+
+        <com.github.anastr.speedviewlib.TubeSpeedometer
+            android:id="@+id/speed"
+            android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:gravity="center"
-            android:tag="FUEL_CONSUMPTION"
-            android:text="@string/text_consumption_default" />
+            app:sv_centerCircleColor="#00ff0000"
+            app:sv_markColor="@android:color/holo_blue_dark"
+            app:sv_maxSpeed="220"
+            app:sv_minSpeed="0"
+            app:sv_speedTextColor="#6B6565"
+            app:sv_speedTextFormat="INTEGER"
+            app:sv_speedTextPosition="BOTTOM_CENTER"
+            app:sv_speedTextSize="64dp"
+            app:sv_speedometerWidth="8dp"
+            app:sv_textColor="#6B6565"
+            app:sv_unitSpeedInterval="8dp"
+            app:sv_unitTextColor="#6B6565"
+            app:sv_unitTextSize="12dp"
+            app:sv_unitUnderSpeedText="true"
+            app:sv_withEffects3D="false" />
 
-        <TextView
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:gravity="center"
-            android:tag="ENGINE_RUNTIME"
-            android:text="@string/text_runtime_default" />
 
-        <TextView
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:gravity="center"
-            android:tag="ENGINE_RPM"
-            android:text="" />
     </TableRow>
 
     <ScrollView
@@ -66,7 +90,8 @@
         android:layout_margin="10dp"
         android:layout_weight="1"
         android:elevation="2dp"
-        android:outlineProvider="bounds">
+        android:outlineProvider="bounds"
+        android:visibility="invisible">
 
         <TableLayout
             android:id="@+id/data_table"
@@ -85,6 +110,14 @@
             android:layout_weight="1"
             android:gravity="center"
             android:text="@string/text_gps"
+            android:textSize="@dimen/abc_text_size_medium_material" />
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:gravity="center"
+            android:text="AWS"
             android:textSize="@dimen/abc_text_size_medium_material" />
 
         <TextView
@@ -112,6 +145,14 @@
 
         <TextView
             android:id="@+id/GPS_POS"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:gravity="center"
+            android:text="" />
+
+        <TextView
+            android:id="@+id/AWS_STATUS"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
